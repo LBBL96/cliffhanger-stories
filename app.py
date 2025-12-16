@@ -42,6 +42,8 @@ class AdventureBot:
         self.current_scene = 0
         self.current_story = None
         self.conversation_history = []  # Track what has happened in current scene
+        self.described_elements = set()  # Track what has already been described in this scene
+        self.story_facts = []  # Track established facts and revelations that must remain consistent
 
     def load_from_session(self):
         """Load bot state from Flask session"""
@@ -50,6 +52,8 @@ class AdventureBot:
             self.current_story = self.story_arcs[story_index]
             self.current_scene = session.get('current_scene', 0)
             self.conversation_history = session.get('conversation_history', [])
+            self.described_elements = set(session.get('described_elements', []))
+            self.story_facts = session.get('story_facts', [])
             print(f"Loaded from session: story={self.current_story['title']}, scene={self.current_scene}, history items={len(self.conversation_history)}")
             if self.conversation_history:
                 print(f"DEBUG: Last conversation item: '{self.conversation_history[-1]['user'][:30]}...'")
@@ -58,6 +62,8 @@ class AdventureBot:
         else:
             print("No session data found")
             self.conversation_history = []
+            self.described_elements = set()
+            self.story_facts = []
 
     def save_to_session(self):
         """Save bot state to Flask session"""
@@ -66,6 +72,8 @@ class AdventureBot:
             session['current_story_index'] = story_index
             session['current_scene'] = self.current_scene
             session['conversation_history'] = self.conversation_history
+            session['described_elements'] = list(self.described_elements)
+            session['story_facts'] = self.story_facts
             print(f"Saved to session: story_index={story_index}, scene={self.current_scene}, history items={len(self.conversation_history)}")
             if self.conversation_history:
                 print(f"DEBUG: Saving last conversation: '{self.conversation_history[-1]['user'][:30]}...'")
@@ -75,6 +83,8 @@ class AdventureBot:
             session.pop('current_story_index', None)
             session.pop('current_scene', None)
             session.pop('conversation_history', None)
+            session.pop('described_elements', None)
+            session.pop('story_facts', None)
             print("Cleared session data")
 
     def start_story(self, story_index):
@@ -82,10 +92,17 @@ class AdventureBot:
         self.current_story = self.story_arcs[story_index]
         self.current_scene = 0
         self.conversation_history = []  # Clear history for new story
+        self.described_elements = set()  # Clear described elements
+        self.story_facts = []  # Clear story facts
+        
+        # Extract elements from intro text to prevent repetition
+        intro_text = self.current_story['intro']
+        self.extract_described_elements(intro_text, 0)
+        
         print(f"Story set to: {self.current_story['title']}, scene: {self.current_scene}")
         self.save_to_session()
         return {
-            'message': self.current_story['intro'] + "\n\nWhat do you want to do next?",
+            'message': intro_text + "\n\nWhat do you want to do next?",
             'image': f'story{story_index+1}_1.jpg'
         }
 
@@ -106,6 +123,9 @@ class AdventureBot:
         
         # Advance to next scene first
         self.current_scene += 1
+        
+        # Clear described elements when changing scenes
+        self.described_elements = set()
         
         # Get the scene outline for the NEW scene
         scene_outline = self.current_story['scenes'][self.current_scene - 1]
@@ -159,6 +179,81 @@ class AdventureBot:
         # Keep only the most recent 3 important interactions
         self.conversation_history = filtered_history[-3:] if filtered_history else []
         print(f"Filtered history for scene change: kept {len(self.conversation_history)} important interactions")
+
+    def extract_story_facts(self, content, user_input):
+        """Extract important story facts that must remain consistent"""
+        content_lower = content.lower()
+        user_lower = user_input.lower()
+        
+        # Track facts about what characters know or reveal
+        fact_patterns = [
+            # Thomas/butler revelations
+            ('thomas' in content_lower or 'butler' in content_lower) and any(word in content_lower for word in ['saw', '見た', 'witnessed', 'noticed', 'observed', 'described', 'mentioned', 'told', 'said', 'revealed', 'admitted', 'confirmed']),
+            # Character actions or statements
+            ('vivian' in content_lower or 'sterling' in content_lower) and any(word in content_lower for word in ['said', 'told', 'admitted', 'revealed', 'knows', 'doesn\'t know', 'claims']),
+            # Physical evidence discovered
+            any(word in user_lower for word in ['examine', 'look at', 'investigate', 'search', 'check']) and any(word in content_lower for word in ['find', 'found', 'discover', 'see', 'notice', 'reveal']),
+        ]
+        
+        # If this response contains important story facts
+        if any(fact_patterns):
+            # Extract key sentences that contain factual information
+            sentences = content.replace('!', '.').replace('?', '.').split('.')
+            for sentence in sentences:
+                sentence = sentence.strip()
+                sentence_lower = sentence.lower()
+                
+                # Track statements about what characters say or know
+                if any(word in sentence_lower for word in ['said', 'told', 'admitted', 'revealed', 'described', 'mentioned', 'claims', 'insists', 'denies', 'confirms']):
+                    if len(sentence) > 20 and len(sentence) < 200:  # Reasonable fact length
+                        self.story_facts.append(sentence)
+                        print(f"DEBUG: Tracked story fact: {sentence[:80]}...")
+                
+                # Track discoveries and observations
+                elif any(word in sentence_lower for word in ['find', 'found', 'discover', 'notice', 'see', 'reveal']) and len(sentence) > 20:
+                    if len(sentence) < 200:
+                        self.story_facts.append(sentence)
+                        print(f"DEBUG: Tracked discovery: {sentence[:80]}...")
+        
+        # Keep only the most recent 15 facts to avoid bloat
+        if len(self.story_facts) > 15:
+            self.story_facts = self.story_facts[-15:]
+
+    def extract_described_elements(self, content, scene_number):
+        """Extract and track elements that have been described to prevent repetition"""
+        # Common descriptive keywords to track
+        descriptive_patterns = [
+            'gray eyes', 'honey-colored hair', 'honey colored hair', 'lilac perfume', 'sapphire ring',
+            'amber light', 'desk lamp', 'coffee cup rings', 'coffee rings', 'ashtrays',
+            'tall for a woman', 'head shorter', 'elegant', 'refined', 'composed',
+            'fog', 'bay', 'docks', 'mansion', 'study', 'library', 'parlor',
+            'butler', 'Thomas', 'nervous', 'wreck',
+            'leaning back', 'toying with', 'checkbook', 'pocketbook',
+            'Turkish tobacco', 'cigarette butts', 'Marlboro',
+            'office', 'filing cabinets', 'papers'
+        ]
+        
+        content_lower = content.lower()
+        for pattern in descriptive_patterns:
+            if pattern.lower() in content_lower:
+                self.described_elements.add(pattern)
+        
+        # Track character names when they're described
+        if 'vivian' in content_lower and any(word in content_lower for word in ['eyes', 'hair', 'perfume', 'jewelry', 'ring']):
+            self.described_elements.add('Vivian appearance')
+        
+        if 'nick' in content_lower and any(word in content_lower for word in ['tall', 'dark', 'rugged', 'handsome']):
+            self.described_elements.add('Nick appearance')
+        
+        # Track setting descriptions
+        if scene_number == 0 and any(word in content_lower for word in ['office', 'desk', 'lamp', 'filing']):
+            self.described_elements.add('office setting')
+        elif scene_number == 1 and any(word in content_lower for word in ['mansion', 'parlor', 'library', 'elegant']):
+            self.described_elements.add('mansion setting')
+        elif scene_number == 2 and any(word in content_lower for word in ['fog', 'docks', 'bay', 'pier']):
+            self.described_elements.add('docks setting')
+        
+        print(f"DEBUG: Described elements now tracked: {len(self.described_elements)} items")
 
     def extract_choices_from_outline(self, scene_outline):
         """Extract choice options from the scene outline"""
@@ -284,11 +379,20 @@ INTERACTIVE INSTRUCTIONS:
 8. Format with clear paragraph breaks - use double line breaks between paragraphs
 9. End responses naturally without suggesting specific choices
 10. ALWAYS complete your sentences - never end mid-sentence or mid-thought
-11. CRITICAL: NEVER repeat previous descriptions like "leaning back in chair", "toying with checkbook", "amber light", "coffee cup rings", etc.
-12. Focus on NEW dialogue, actions, and details that haven't been mentioned before
-13. If describing the same character or object, find fresh details and perspectives
-14. Move the conversation and story forward with each response - no recycling content
-15. LOCATION COMPLIANCE IS MANDATORY - You MUST stay in the specified location and NEVER mix elements from other scenes"""
+
+CRITICAL ANTI-REPETITION RULES:
+11. NEVER re-describe settings, rooms, or locations that have already been described
+12. NEVER re-mention character physical appearances (eyes, hair, height, perfume, jewelry) once established
+13. NEVER re-describe objects, furniture, or atmospheric details already mentioned
+14. DO NOT repeat phrases like "gray eyes", "honey-colored hair", "lilac perfume", "sapphire ring"
+15. DO NOT re-describe the room ambiance, lighting, or general setting
+16. When a character speaks or acts, focus ONLY on: what they say/do NOW, new information revealed, plot advancement
+17. Assume setting and character appearances are already established - skip all physical descriptions
+18. If you must reference a character, use their name only - no descriptive modifiers
+19. Each response should contain ONLY: new dialogue, new actions, new discoveries, plot progression
+20. Think: "What's NEW in this moment?" - describe ONLY that
+
+LOCATION COMPLIANCE IS MANDATORY - You MUST stay in the specified location and NEVER mix elements from other scenes"""
 
             # Create location-specific context
             location_context = ""
@@ -336,9 +440,31 @@ INTERACTIVE INSTRUCTIONS:
             else:
                 print("DEBUG: No conversation history available for context")
 
+            # Build list of already described elements
+            already_described = ""
+            if self.described_elements:
+                already_described = f"""ALREADY DESCRIBED IN THIS SCENE - DO NOT MENTION AGAIN:
+{', '.join(sorted(self.described_elements))}
+
+You MUST NOT re-describe any of these elements. Focus only on what is NEW."""
+
+            # Build list of established story facts that must remain consistent
+            story_facts_context = ""
+            if self.story_facts:
+                story_facts_context = """ESTABLISHED FACTS - THESE MUST REMAIN CONSISTENT (DO NOT CONTRADICT):
+"""
+                for i, fact in enumerate(self.story_facts, 1):
+                    story_facts_context += f"{i}. {fact}\n"
+                story_facts_context += """
+CRITICAL: These facts are LOCKED IN. You CANNOT contradict them. If a character said they saw something, they cannot later deny it. If evidence was discovered, it stays discovered. Build on these facts, don't reverse them."""
+
             user_message = f"""USER INPUT: {user_input}
 
 LOCATION CONTEXT: {location_context}
+
+{already_described}
+
+{story_facts_context}
 
 {history_context}Respond to this input with NEW content that continues from where we left off:"""
 
@@ -363,6 +489,12 @@ LOCATION CONTEXT: {location_context}
             if content and not content.rstrip().endswith(('.', '!', '?', '"', "'", '...', ':')):
                 # Add ellipsis if it seems incomplete
                 content = content.rstrip() + "..."
+            
+            # Track described elements to prevent repetition
+            self.extract_described_elements(content, self.current_scene)
+            
+            # Track story facts to prevent contradictions
+            self.extract_story_facts(content, user_input)
             
             return content
             
@@ -512,6 +644,9 @@ Generate the expanded scene now:"""
             if content and not content.rstrip().endswith(('.', '!', '?', '"', "'", '...', ':')):
                 # Add ellipsis if it seems incomplete
                 content = content.rstrip() + "..."
+            
+            # Track described elements from generated scene to prevent repetition
+            self.extract_described_elements(content, self.current_scene)
             
             return content
             
