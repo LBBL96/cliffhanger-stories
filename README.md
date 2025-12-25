@@ -1,14 +1,16 @@
-# Serial Adventure Bot
+# Cliffhanger Stories
 
-An interactive chatbot that tells serial adventure stories with cliffhangers that continue in the next chat session.
+An interactive chatbot that tells serial adventure stories with cliffhangers that continue in the next chat session. Powered by AI (OpenAI or Anthropic).
 
 ## Features
 
-- Multiple story arcs to choose from
-- Interactive storytelling with choices
-- Visual elements for each scene
-- Responsive web interface
-- State management for continuing stories
+- **Multiple AI Providers**: Choose between OpenAI (GPT-4) or Anthropic (Claude) models
+- **Command-line Provider Selection**: Easily switch AI providers with a simple flag
+- **Multiple Story Arcs**: Choose from different genre adventures
+- **Interactive Storytelling**: Free-form exploration and choices
+- **Responsive Web Interface**: Clean, modern UI
+- **State Management**: Continue your story across sessions
+- **Smart Context Tracking**: Prevents repetition and maintains story consistency
 
 ## Setup
 
@@ -22,28 +24,74 @@ An interactive chatbot that tells serial adventure stories with cliffhangers tha
    ```bash
    pip install -r requirements.txt
    ```
-4. Set up your OpenAI API key:
+4. Set up your API keys by creating a `.env` file and  copying the example file
    ```bash
-   export OPENAI_API_KEY="your-api-key-here"
+   cp .env.example .env
    ```
-   Or create a `.env` file with:
+   Then edit `.env` and add your API keys:
    ```
-   OPENAI_API_KEY=your-api-key-here
+   OPENAI_API_KEY=your-openai-api-key-here
+   OPENAI_MODEL=gpt-4o-2024-11-20
+   
+   ANTHROPIC_API_KEY=your-anthropic-api-key-here
+   ANTHROPIC_MODEL=claude-opus-4-20250514
    ```
-5. Create a `static/images` directory and add some images for the stories (naming them `story1_1.jpg`, `story1_2.jpg`, etc.)
 
+   # Choose default provider (optional, default is openai)
+   ```
+   AI_PROVIDER=openai
+   ```
+   
 ## Running the Application
 
-1. Activate the virtual environment:
-   ```bash
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-2. Start the Flask server:
-   ```bash
-   python app.py
-   ```
-3. Open your web browser and navigate to `http://localhost:5000`
-4. Select a story and begin your adventure!
+### With OpenAI (default)
+```bash
+python app.py
+```
+
+### With Anthropic/Claude
+```bash
+python app.py --provider claude
+```
+
+### Start with Fresh Session
+To clear your story progress and start fresh:
+```bash
+python app.py --reset
+```
+
+You can combine flags:
+```bash
+python app.py --provider claude --reset
+```
+
+### View Available Options
+```bash
+python app.py --help
+```
+
+Then open your web browser and navigate to `http://localhost:5006`
+
+## AI Provider Configuration
+
+The application supports two methods for selecting your AI provider:
+
+1. **Command-line flag** (takes priority):
+   - `--provider openai` - Use OpenAI GPT models
+   - `--provider claude` - Use Anthropic Claude models
+
+2. **Environment variable** in `.env`:
+   - `AI_PROVIDER=openai` or `AI_PROVIDER=anthropic`
+
+### Supported Models
+
+**OpenAI:**
+- Default: `gpt-4o-2024-11-20`
+- Customizable via `OPENAI_MODEL` in `.env`
+
+**Anthropic:**
+- Default: `claude-opus-4-20250514`
+- Customizable via `ANTHROPIC_MODEL` in `.env`
 
 ## Demo Mode (No API Key Required)
 
