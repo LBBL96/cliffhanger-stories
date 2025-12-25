@@ -1,15 +1,65 @@
 from flask import Flask, render_template, jsonify, request, session
+from flask_session import Session
 from openai import OpenAI
+import anthropic
 import os
+import argparse
 from datetime import datetime
 import openai
-from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='Cliffhanger Stories - Interactive Adventure Game')
+parser.add_argument('--provider', type=str, choices=['openai', 'claude'], default=None,
+                    help='AI provider to use: "openai" (default) or "claude" (Anthropic)')
+parser.add_argument('--reset', action='store_true',
+                    help='Clear session data and start fresh')
+args, unknown = parser.parse_known_args()
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-for-sessions-change-in-production'
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# Configure server-side session storage to handle large conversation histories
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = './flask_session'
+app.config['SESSION_PERMANENT'] = False
+app.config['SESSION_USE_SIGNER'] = True
+Session(app)
+
+# Handle session reset if --reset flag is provided
+if args.reset:
+    import shutil
+    session_dir = os.path.join(os.path.dirname(__file__), 'flask_session')
+    if os.path.exists(session_dir):
+        shutil.rmtree(session_dir)
+        print("✓ Session data cleared - starting fresh")
+    else:
+        print("✓ No existing session data found - starting fresh")
+
+# AI Provider Configuration
+# Priority: command-line flag > environment variable > default (openai)
+if args.provider:
+    # Map 'claude' to 'anthropic' internally
+    AI_PROVIDER = 'anthropic' if args.provider == 'claude' else 'openai'
+    print(f"AI provider set via command-line: {args.provider}")
+else:
+    AI_PROVIDER = os.getenv('AI_PROVIDER', 'openai').lower()
+    if AI_PROVIDER not in ['openai', 'anthropic']:
+        print(f"Warning: Invalid AI_PROVIDER '{AI_PROVIDER}' in .env, defaulting to 'openai'")
+        AI_PROVIDER = 'openai'
+
+# Initialize AI clients based on provider
+if AI_PROVIDER == 'anthropic':
+    anthropic_client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+    ANTHROPIC_MODEL = os.getenv('ANTHROPIC_MODEL', 'claude-opus-4-20250514')
+    print(f"Using Anthropic AI with model: {ANTHROPIC_MODEL}")
+else:
+    openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-2024-11-20')
+    print(f"Using OpenAI with model: {OPENAI_MODEL}")
 
 # In-memory storage for stories (in production, use a database)
 stories = {}
@@ -19,6 +69,23 @@ class AdventureBot:
         self.story_arcs = [
             {
                 'title': 'The Algerian Eagle: A Nick Nolan Mystery',
+                'canonical_facts': [
+                    'The Algerian Eagle is a valuable statue made of gold and has ruby eyes',
+                    'The statue contains a hidden compartment that uncle only found recently',
+                    'The uncle bought the statue in Tangiers in the 1920s',
+                    'The uncle\'s name is Harold',
+                    'The uncle had an identical twin brother named Charles',
+                    'Vivian Sterling does not know about her uncle\'s twin',
+                    'Charles is hiding out at his brother Harold\'s mansion and Thomas is aware of it but is afraid to tell',
+                    'Vivian Sterling\'s uncle was killed for the statue',
+                    'Nick Nolan has an antique paperweight on his desk that his grandfather gave him',
+                    'Nick\'s paperweight was a reward from Vivian\'s uncle Harold after his grandfather James saved Harold\'s life in the WWI',
+                    'Vivian Sterling always calls Nick "Nicholas" - never "Nick" and everyone else calls him "Nick"',
+                    'The butler\'s name is Thomas',
+                    'The uncle owned a mansion',
+                    'Lefty Torrino is a scarred smuggler who wears a fedora',
+                    'The story takes place in 1940s San Francisco'
+                ],
                 'intro': 'The lady, Vivian Sterling, sits across from you at your desk, seeming not to notice the unkempt pile of papers covered in coffee cup rings and ashtrays overflowing with Marlboro butts. The amber light from your desk lamp catches the worry lines around her eyes as she speaks in measured tones about her uncle\'s death. "Someone killed him for a statue called the Algerian Eagle, Nicholas," she says, her voice barely above a whisper. The way she uses your full name sends a chill down your spine - nobody calls you Nicholas. You\'re just Nick, the guy people come to when they need something no one else can give them: answers.\n\nShe seems a little distracted as she reaches into her pocketbook, but hesitates just a moment when her eyes land on the antique paperweight on your desk. You never explain things to people, but it slips out anyway. "My grandfather gave that to me." She nods slightly in acknowledgement and turns her attention back to retrieving a leather billfold that turns out to be a checkbook. "I\'ll pay whatever it costs to get answers, Nicholas," she says quietly. You tell her you don\'t take money until you have something to give her - something you\'ve never said to a potential client before.',
                 'scenes': [
                     'You decide to visit the uncle\'s mansion. The butler, a nervous wreck, claims he saw nothing. But you watch Vivian speak to him - she thanks him by name, asks how he\'s holding up, and lightly touches his arm when she sees his anxiety. "It\'s alright, Thomas," she says gently. There\'s genuine warmth there. Then you notice fresh cigarette butts - expensive Turkish tobacco. You\'ve never seen Vivian smoke, but someone was here recently. The plot thickens like fog rolling in from the bay. Do you ask Vivian about the cigarettes or investigate the butler\'s background?',
@@ -29,6 +96,13 @@ class AdventureBot:
             },
             {
                 'title': 'Perils of Penelope: A Silent Movie Melodrama',
+                'canonical_facts': [
+                    'Penelope Pureheart is an orphaned heiress to the Pureheart Fortune',
+                    'Snidely Whiplash is the villain with a magnificent mustache',
+                    'Snidely holds a mortgage on the family farm',
+                    'The story takes place in the early 1900s',
+                    'Penelope has a dear sweet grandmother'
+                ],
                 'intro': 'Our story opens on sweet, innocent Penelope Pureheart, orphaned heiress to the Pureheart Fortune. But lurking in the shadows with his magnificent mustache and dastardly grin is the villainous Snidely Whiplash! He\'s got a mortgage on the family farm and evil plans brewing. Will our heroine escape his clutches?',
                 'scenes': [
                     'Snidely has cornered Penelope in the old mill! "Pay the mortgage or lose the farm, my pretty!" he sneers, twirling his mustache. But wait - he\'s also holding a deed that would make him heir to everything if she can\'t pay! Penelope spots a rope hanging from the rafters. Does she try to swing to safety or attempt to grab the deed from his coat pocket?',
@@ -44,6 +118,7 @@ class AdventureBot:
         self.conversation_history = []  # Track what has happened in current scene
         self.described_elements = set()  # Track what has already been described in this scene
         self.story_facts = []  # Track established facts and revelations that must remain consistent
+        self.canonical_facts = []  # Immutable facts from the story definition
 
     def load_from_session(self):
         """Load bot state from Flask session"""
@@ -54,6 +129,7 @@ class AdventureBot:
             self.conversation_history = session.get('conversation_history', [])
             self.described_elements = set(session.get('described_elements', []))
             self.story_facts = session.get('story_facts', [])
+            self.canonical_facts = self.current_story.get('canonical_facts', [])
             print(f"Loaded from session: story={self.current_story['title']}, scene={self.current_scene}, history items={len(self.conversation_history)}")
             if self.conversation_history:
                 print(f"DEBUG: Last conversation item: '{self.conversation_history[-1]['user'][:30]}...'")
@@ -74,6 +150,7 @@ class AdventureBot:
             session['conversation_history'] = self.conversation_history
             session['described_elements'] = list(self.described_elements)
             session['story_facts'] = self.story_facts
+            # canonical_facts don't need to be saved - they're loaded from story definition
             print(f"Saved to session: story_index={story_index}, scene={self.current_scene}, history items={len(self.conversation_history)}")
             if self.conversation_history:
                 print(f"DEBUG: Saving last conversation: '{self.conversation_history[-1]['user'][:30]}...'")
@@ -94,6 +171,7 @@ class AdventureBot:
         self.conversation_history = []  # Clear history for new story
         self.described_elements = set()  # Clear described elements
         self.story_facts = []  # Clear story facts
+        self.canonical_facts = self.current_story.get('canonical_facts', [])  # Load immutable facts
         
         # Extract elements from intro text to prevent repetition
         intro_text = self.current_story['intro']
@@ -176,48 +254,57 @@ class AdventureBot:
             if has_story_info and not has_location_action:
                 filtered_history.append(interaction)
         
-        # Keep only the most recent 3 important interactions
-        self.conversation_history = filtered_history[-3:] if filtered_history else []
+        # Keep the most recent 10 important interactions when changing scenes
+        # This maintains continuity while filtering out location-specific details
+        self.conversation_history = filtered_history[-10:] if filtered_history else []
         print(f"Filtered history for scene change: kept {len(self.conversation_history)} important interactions")
 
     def extract_story_facts(self, content, user_input):
         """Extract important story facts that must remain consistent"""
-        content_lower = content.lower()
-        user_lower = user_input.lower()
+        # Track quoted dialogue - anything in quotes is what a character said
+        import re
+        quoted_dialogue = re.findall(r'"([^"]+)"', content)
+        for quote in quoted_dialogue:
+            if len(quote) > 10 and len(quote) < 250:
+                # Store the quote with context about who might be speaking
+                fact = f'Character said: "{quote}"'
+                self.story_facts.append(fact)
+                print(f"DEBUG: Tracked dialogue: {quote[:60]}...")
         
-        # Track facts about what characters know or reveal
-        fact_patterns = [
-            # Thomas/butler revelations
-            ('thomas' in content_lower or 'butler' in content_lower) and any(word in content_lower for word in ['saw', '見た', 'witnessed', 'noticed', 'observed', 'described', 'mentioned', 'told', 'said', 'revealed', 'admitted', 'confirmed']),
-            # Character actions or statements
-            ('vivian' in content_lower or 'sterling' in content_lower) and any(word in content_lower for word in ['said', 'told', 'admitted', 'revealed', 'knows', 'doesn\'t know', 'claims']),
-            # Physical evidence discovered
-            any(word in user_lower for word in ['examine', 'look at', 'investigate', 'search', 'check']) and any(word in content_lower for word in ['find', 'found', 'discover', 'see', 'notice', 'reveal']),
-        ]
+        # Extract key sentences that contain factual information
+        sentences = content.replace('!', '.').replace('?', '.').split('.')
+        for sentence in sentences:
+            sentence = sentence.strip()
+            sentence_lower = sentence.lower()
+            
+            # Track any character mentions or introductions
+            if any(word in sentence_lower for word in ['dr.', 'doctor', 'professor', 'mr.', 'mrs.', 'miss', 'detective', 'officer']):
+                if len(sentence) > 15 and len(sentence) < 250:
+                    self.story_facts.append(sentence)
+                    print(f"DEBUG: Tracked character mention: {sentence[:80]}...")
+            
+            # Track statements about what characters say or know
+            elif any(word in sentence_lower for word in ['said', 'told', 'admitted', 'revealed', 'described', 'mentioned', 'claims', 'insists', 'denies', 'confirms', 'knows', 'doesn\'t know', 'heard']):
+                if len(sentence) > 20 and len(sentence) < 250:
+                    self.story_facts.append(sentence)
+                    print(f"DEBUG: Tracked statement: {sentence[:80]}...")
+            
+            # Track discoveries and observations
+            elif any(word in sentence_lower for word in ['find', 'found', 'discover', 'notice', 'see', 'reveal', 'spotted', 'observed']):
+                if len(sentence) > 20 and len(sentence) < 250:
+                    self.story_facts.append(sentence)
+                    print(f"DEBUG: Tracked discovery: {sentence[:80]}...")
+            
+            # Track character relationships and connections
+            elif any(word in sentence_lower for word in ['brother', 'sister', 'uncle', 'aunt', 'father', 'mother', 'friend', 'colleague', 'partner', 'associate']):
+                if len(sentence) > 15 and len(sentence) < 250:
+                    self.story_facts.append(sentence)
+                    print(f"DEBUG: Tracked relationship: {sentence[:80]}...")
         
-        # If this response contains important story facts
-        if any(fact_patterns):
-            # Extract key sentences that contain factual information
-            sentences = content.replace('!', '.').replace('?', '.').split('.')
-            for sentence in sentences:
-                sentence = sentence.strip()
-                sentence_lower = sentence.lower()
-                
-                # Track statements about what characters say or know
-                if any(word in sentence_lower for word in ['said', 'told', 'admitted', 'revealed', 'described', 'mentioned', 'claims', 'insists', 'denies', 'confirms']):
-                    if len(sentence) > 20 and len(sentence) < 200:  # Reasonable fact length
-                        self.story_facts.append(sentence)
-                        print(f"DEBUG: Tracked story fact: {sentence[:80]}...")
-                
-                # Track discoveries and observations
-                elif any(word in sentence_lower for word in ['find', 'found', 'discover', 'notice', 'see', 'reveal']) and len(sentence) > 20:
-                    if len(sentence) < 200:
-                        self.story_facts.append(sentence)
-                        print(f"DEBUG: Tracked discovery: {sentence[:80]}...")
-        
-        # Keep only the most recent 15 facts to avoid bloat
-        if len(self.story_facts) > 15:
-            self.story_facts = self.story_facts[-15:]
+        # Keep only the most recent 40 facts for comprehensive tracking
+        # This ensures we don't lose important character statements and discoveries
+        if len(self.story_facts) > 40:
+            self.story_facts = self.story_facts[-40:]
 
     def extract_described_elements(self, content, scene_number):
         """Extract and track elements that have been described to prevent repetition"""
@@ -227,23 +314,37 @@ class AdventureBot:
             'amber light', 'desk lamp', 'coffee cup rings', 'coffee rings', 'ashtrays',
             'tall for a woman', 'head shorter', 'elegant', 'refined', 'composed',
             'fog', 'bay', 'docks', 'mansion', 'study', 'library', 'parlor',
-            'butler', 'Thomas', 'nervous', 'wreck',
+            'butler', 'Thomas', 'nervous', 'wreck', 'nervous wreck',
             'leaning back', 'toying with', 'checkbook', 'pocketbook',
             'Turkish tobacco', 'cigarette butts', 'Marlboro',
-            'office', 'filing cabinets', 'papers'
+            'office', 'filing cabinets', 'papers',
+            'scarred', 'fedora', 'lefty', 'torrino'
         ]
         
         content_lower = content.lower()
         for pattern in descriptive_patterns:
             if pattern.lower() in content_lower:
                 self.described_elements.add(pattern)
+                print(f"DEBUG: Tracked described element: '{pattern}'")
         
-        # Track character names when they're described
-        if 'vivian' in content_lower and any(word in content_lower for word in ['eyes', 'hair', 'perfume', 'jewelry', 'ring']):
+        # Track character names when they're described with physical details
+        if 'vivian' in content_lower and any(word in content_lower for word in ['eyes', 'hair', 'perfume', 'jewelry', 'ring', 'tall', 'elegant', 'refined']):
             self.described_elements.add('Vivian appearance')
+            print(f"DEBUG: Tracked Vivian appearance description")
         
-        if 'nick' in content_lower and any(word in content_lower for word in ['tall', 'dark', 'rugged', 'handsome']):
+        if 'nick' in content_lower and any(word in content_lower for word in ['tall', 'dark', 'rugged', 'handsome', 'fit']):
             self.described_elements.add('Nick appearance')
+            print(f"DEBUG: Tracked Nick appearance description")
+        
+        # Track Thomas descriptions specifically
+        if 'thomas' in content_lower and any(word in content_lower for word in ['nervous', 'wreck', 'butler', 'anxious', 'worried', 'frightened', 'scared']):
+            self.described_elements.add('Thomas description')
+            print(f"DEBUG: Tracked Thomas description")
+        
+        # Track Lefty descriptions
+        if any(name in content_lower for name in ['lefty', 'torrino']) and any(word in content_lower for word in ['scarred', 'scar', 'fedora', 'hat', 'smuggler']):
+            self.described_elements.add('Lefty description')
+            print(f"DEBUG: Tracked Lefty description")
         
         # Track setting descriptions
         if scene_number == 0 and any(word in content_lower for word in ['office', 'desk', 'lamp', 'filing']):
@@ -253,7 +354,7 @@ class AdventureBot:
         elif scene_number == 2 and any(word in content_lower for word in ['fog', 'docks', 'bay', 'pier']):
             self.described_elements.add('docks setting')
         
-        print(f"DEBUG: Described elements now tracked: {len(self.described_elements)} items")
+        print(f"DEBUG: Total described elements tracked: {len(self.described_elements)} items: {sorted(self.described_elements)}")
 
     def extract_choices_from_outline(self, scene_outline):
         """Extract choice options from the scene outline"""
@@ -291,9 +392,10 @@ class AdventureBot:
             'response': response_content
         })
         
-        # Keep only last 5 interactions to prevent session cookie bloat
-        if len(self.conversation_history) > 5:
-            self.conversation_history = self.conversation_history[-5:]
+        # Keep last 15 interactions for strong continuity
+        # Flask sessions can handle this without cookie size issues
+        if len(self.conversation_history) > 15:
+            self.conversation_history = self.conversation_history[-15:]
         
         print(f"DEBUG: Added to history. Total interactions: {len(self.conversation_history)}")
         print(f"DEBUG: Latest interaction - User: '{user_input[:50]}...'")
@@ -380,6 +482,14 @@ INTERACTIVE INSTRUCTIONS:
 9. End responses naturally without suggesting specific choices
 10. ALWAYS complete your sentences - never end mid-sentence or mid-thought
 
+DIALOGUE TRACKING (CRITICAL):
+11. When a character speaks, use quotation marks: "Like this"
+12. ANYTHING IN QUOTES is what the character SAID OUT LOUD
+13. Characters are BOUND by what they say in quotes - if Vivian says "I don't know Dr. Whitmore," she DOESN'T know him
+14. Track character knowledge based on quoted dialogue
+15. You can write dialogue without speech tags: She shifts. "I don't know him." Her voice wavers.
+16. But ALWAYS use quotes for actual speech so we can track what characters know and claim
+
 CRITICAL ANTI-REPETITION RULES:
 11. NEVER re-describe settings, rooms, or locations that have already been described
 12. NEVER re-mention character physical appearances (eyes, hair, height, perfume, jewelry) once established
@@ -432,31 +542,74 @@ LOCATION COMPLIANCE IS MANDATORY - You MUST stay in the specified location and N
             history_context = ""
             if self.conversation_history:
                 print(f"DEBUG: Building history context with {len(self.conversation_history)} interactions")
-                history_context = "IMPORTANT STORY CONTINUITY (key information from previous scenes):\n"
+                print(f"DEBUG: Conversation history items: {[h['user'][:50] for h in self.conversation_history]}")
+                history_context = """📜 CONVERSATION HISTORY - EVERYTHING THAT HAS HAPPENED IN THIS SCENE:
+(Characters REMEMBER all of this. You MUST maintain continuity with these exchanges.)
+
+"""
                 for i, interaction in enumerate(self.conversation_history, 1):
-                    history_context += f"{i}. User: {interaction['user']}\n"
-                    history_context += f"   Key info: {interaction['response'][:150]}...\n\n"
-                history_context += "CRITICAL: This information carries forward - characters remember these conversations and revelations!\n\n"
+                    # Include FULL conversation, not truncated
+                    history_context += f"Exchange {i}:\n"
+                    history_context += f"Player asked/did: {interaction['user']}\n"
+                    history_context += f"You responded: {interaction['response']}\n"
+                    history_context += "---\n\n"
+                    print(f"DEBUG: Added exchange {i} to context - User: '{interaction['user'][:40]}...'")
+                history_context += """⚠️ CRITICAL CONTINUITY RULES:
+- Characters REMEMBER everything from these exchanges
+- QUOTED DIALOGUE = CHARACTER SPEECH: Anything in quotes is what a character said out loud
+- If a character mentioned someone (like Dr. Whitmore), they KNOW about them in future responses
+- If a character said something in quotes, they SAID IT - track their knowledge accordingly
+- If information was revealed, it STAYS revealed - don't contradict it
+- Build on what was said, don't reset or forget
+- Maintain consistent character knowledge and awareness
+- Example: If Vivian said "I don't know any Dr. Whitmore" then she DOESN'T know Dr. Whitmore
+
+"""
             else:
                 print("DEBUG: No conversation history available for context")
 
             # Build list of already described elements
             already_described = ""
             if self.described_elements:
-                already_described = f"""ALREADY DESCRIBED IN THIS SCENE - DO NOT MENTION AGAIN:
+                already_described = f"""🚫 ALREADY DESCRIBED IN THIS SCENE - ABSOLUTELY DO NOT MENTION AGAIN:
 {', '.join(sorted(self.described_elements))}
 
-You MUST NOT re-describe any of these elements. Focus only on what is NEW."""
+⚠️ CRITICAL: You MUST NOT re-describe any of these elements. 
+- If "Thomas description" is listed, DO NOT describe Thomas as nervous, a wreck, anxious, etc.
+- If "Vivian appearance" is listed, DO NOT mention her eyes, hair, perfume, or jewelry
+- If character descriptions are listed, refer to them by NAME ONLY with NO descriptive words
+- Focus ONLY on what is NEW in this moment - new actions, new dialogue, new discoveries
+- Example: Write "Thomas speaks" NOT "The nervous butler speaks"
+"""
+
+            # Build list of canonical facts (immutable from story definition)
+            canonical_facts_context = ""
+            if self.canonical_facts:
+                canonical_facts_context = """⚠️ CANONICAL STORY FACTS - ABSOLUTELY IMMUTABLE (NEVER CHANGE THESE):
+"""
+                for i, fact in enumerate(self.canonical_facts, 1):
+                    canonical_facts_context += f"{i}. {fact}\n"
+                canonical_facts_context += """
+🔒 LOCKED: These facts are PERMANENT and UNCHANGEABLE. They define the core story elements.
+- Character names NEVER change (Thomas is always Thomas, Vivian is always Vivian)
+- The Algerian Eagle is ALWAYS the statue's name - never "Maltese Falcon" or any other name
+- Vivian's uncle was killed - this NEVER changes
+- The paperweight connection NEVER changes
+- ALL canonical facts must be referenced EXACTLY as written above
+
+"""
 
             # Build list of established story facts that must remain consistent
             story_facts_context = ""
             if self.story_facts:
-                story_facts_context = """ESTABLISHED FACTS - THESE MUST REMAIN CONSISTENT (DO NOT CONTRADICT):
+                story_facts_context = """ESTABLISHED FACTS FROM GAMEPLAY - THESE MUST REMAIN CONSISTENT:
 """
                 for i, fact in enumerate(self.story_facts, 1):
                     story_facts_context += f"{i}. {fact}\n"
                 story_facts_context += """
-CRITICAL: These facts are LOCKED IN. You CANNOT contradict them. If a character said they saw something, they cannot later deny it. If evidence was discovered, it stays discovered. Build on these facts, don't reverse them."""
+CRITICAL: These facts emerged during gameplay and are LOCKED IN. You CANNOT contradict them. If a character said they saw something, they cannot later deny it. If evidence was discovered, it stays discovered. Build on these facts, don't reverse them.
+
+"""
 
             user_message = f"""USER INPUT: {user_input}
 
@@ -464,26 +617,34 @@ LOCATION CONTEXT: {location_context}
 
 {already_described}
 
-{story_facts_context}
+{canonical_facts_context}{story_facts_context}
 
 {history_context}Respond to this input with NEW content that continues from where we left off:"""
 
-            # Create OpenAI client instance
-            from openai import OpenAI
-            import os
-            ai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-            
-            response = ai_client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
-                messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message}
-                ],
-                max_tokens=600,  # Increased for complete responses
-                temperature=0.8  # More creative for interactive responses
-            )
-            
-            content = response.choices[0].message.content
+            # Generate response using configured AI provider
+            # Lower temperature (0.5) for more consistent, factual responses
+            if AI_PROVIDER == 'anthropic':
+                response = anthropic_client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=600,
+                    temperature=0.5,
+                    system=system_message,
+                    messages=[
+                        {"role": "user", "content": user_message}
+                    ]
+                )
+                content = response.content[0].text
+            else:
+                response = openai_client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": user_message}
+                    ],
+                    max_tokens=600,
+                    temperature=0.5
+                )
+                content = response.choices[0].message.content
             
             # Check if response was cut off mid-sentence
             if content and not content.rstrip().endswith(('.', '!', '?', '"', "'", '...', ':')):
@@ -523,11 +684,23 @@ CRITICAL PERIOD ACCURACY (1940s):
 CHARACTER DESCRIPTIONS (USE THESE EXACT DETAILS - DO NOT INVENT NEW ONES):
 - Nick Nolan (you): Tall, dark, fit, and ruggedly good looking. The kind of man women stare at without him even noticing. Hard-boiled detective with integrity.
 - Vivian Sterling: Gray eyes, honey-colored hair. Tall for a woman but a head shorter than Nick. Wears faint lilac-scented perfume. Only jewelry is a sapphire ring on her right hand. Elegant, refined, calm, and composed. Speaks with quiet dignity and grace, never bitter or hard-edged. She doesn't seem to notice that she is being noticed.
+- Thomas: The butler at the uncle's mansion. Nervous disposition.
+- Lefty Torrino: Scarred smuggler who wears a fedora.
 
-NAMING CONSISTENCY (CRITICAL):
-- Vivian Sterling ALWAYS calls him "Nicholas" - never "Nick"
-- ALL other characters call him "Nick" - never "Nicholas"
+NAMING CONSISTENCY (ABSOLUTELY CRITICAL - NEVER VIOLATE):
+- Vivian Sterling ALWAYS calls him "Nicholas" - NEVER "Nick"
+- ALL other characters call him "Nick" - NEVER "Nicholas"
+- The butler is ALWAYS named "Thomas" - never any other name
+- The statue is ALWAYS "the Algerian Eagle" - never "Maltese Falcon" or any other name
+- Vivian's relative is ALWAYS "uncle" - never father, brother, or any other relation
 - This naming pattern is a key character trait and plot element
+
+CONSISTENCY ENFORCEMENT:
+- If you mention the statue, it MUST be called "the Algerian Eagle"
+- If you mention the butler, he MUST be called "Thomas"
+- If Vivian speaks to Nick, she MUST say "Nicholas"
+- The uncle's death and the paperweight connection are FIXED story elements
+- DO NOT invent new names, relationships, or backstories that contradict established facts
 
 STYLE REQUIREMENTS:
 - Write in second person ("you")
@@ -578,6 +751,13 @@ LENGTH: 2-3 paragraphs with vivid action
         try:
             style_prompt = self.get_story_style_prompt(self.current_story['title'])
             
+            # Build canonical facts context for scene generation
+            canonical_facts_for_scene = ""
+            if self.canonical_facts:
+                canonical_facts_for_scene = "\n⚠️ CANONICAL STORY FACTS (NEVER CHANGE):\n"
+                for fact in self.canonical_facts:
+                    canonical_facts_for_scene += f"- {fact}\n"
+            
             # Structured for optimal caching - system message contains cacheable content
             system_message = f"""You are a master storyteller specializing in classic genre fiction.
 
@@ -586,6 +766,7 @@ LENGTH: 2-3 paragraphs with vivid action
 STORY CONTEXT:
 Title: {self.current_story['title']}
 Previous scenes have established the characters and setting.
+{canonical_facts_for_scene}
 
 STANDARD INSTRUCTIONS:
 1. Expand this outline into a rich, detailed scene
@@ -595,6 +776,7 @@ STANDARD INSTRUCTIONS:
 5. DO NOT include the choice options in your response - end just before the choices
 6. Stay true to the genre and time period
 7. End with suspense that leads naturally to decision-making
+8. CRITICAL: Use EXACT names from canonical facts - never invent alternatives
 8. Format with clear paragraph breaks - use double line breaks between paragraphs
 9. ALWAYS complete your sentences - never end mid-sentence or mid-thought
 10. Focus on NEW story elements and progression - avoid repeating previous scene descriptions"""
@@ -605,40 +787,62 @@ STANDARD INSTRUCTIONS:
 
 Generate the expanded scene now:"""
 
-            # Create OpenAI client instance
-            from openai import OpenAI
-            import os
-            ai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-            
-            response = ai_client.chat.completions.create(
-                model="gpt-4o-2024-11-20",
-                messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message}
-                ],
-                max_tokens=1000,
-                temperature=0.7
-            )
-            
-            # Log usage statistics including caching
-            usage = response.usage
-            total_tokens = usage.total_tokens
-            
-            # Check for cached tokens (available in newer API responses)
-            cached_tokens = 0
-            if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
-                cached_tokens = getattr(usage.prompt_tokens_details, 'cached_tokens', 0)
-            
-            # Calculate costs
-            input_cost = (usage.prompt_tokens - cached_tokens) * 0.0025 / 1000  # Regular input tokens
-            cached_cost = cached_tokens * 0.00125 / 1000  # Cached tokens (50% discount)
-            output_cost = usage.completion_tokens * 0.01 / 1000
-            total_cost = input_cost + cached_cost + output_cost
-            
-            print(f"Usage: {usage.prompt_tokens} input ({cached_tokens} cached), {usage.completion_tokens} output")
-            print(f"Cost: ${total_cost:.4f} (saved ${cached_tokens * 0.00125 / 1000:.4f} from caching)")
-            
-            content = response.choices[0].message.content
+            # Generate response using configured AI provider
+            # Lower temperature (0.5) for scene generation to maintain consistency
+            if AI_PROVIDER == 'anthropic':
+                response = anthropic_client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=1000,
+                    temperature=0.5,
+                    system=system_message,
+                    messages=[
+                        {"role": "user", "content": user_message}
+                    ]
+                )
+                content = response.content[0].text
+                
+                # Log usage statistics for Anthropic
+                usage = response.usage
+                input_tokens = usage.input_tokens
+                output_tokens = usage.output_tokens
+                
+                # Anthropic pricing (Claude 3.5 Sonnet)
+                input_cost = input_tokens * 0.003 / 1000
+                output_cost = output_tokens * 0.015 / 1000
+                total_cost = input_cost + output_cost
+                
+                print(f"Usage: {input_tokens} input, {output_tokens} output")
+                print(f"Cost: ${total_cost:.4f}")
+            else:
+                response = openai_client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": user_message}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.5
+                )
+                
+                # Log usage statistics including caching
+                usage = response.usage
+                total_tokens = usage.total_tokens
+                
+                # Check for cached tokens (available in newer API responses)
+                cached_tokens = 0
+                if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                    cached_tokens = getattr(usage.prompt_tokens_details, 'cached_tokens', 0)
+                
+                # Calculate costs
+                input_cost = (usage.prompt_tokens - cached_tokens) * 0.0025 / 1000  # Regular input tokens
+                cached_cost = cached_tokens * 0.00125 / 1000  # Cached tokens (50% discount)
+                output_cost = usage.completion_tokens * 0.01 / 1000
+                total_cost = input_cost + cached_cost + output_cost
+                
+                print(f"Usage: {usage.prompt_tokens} input ({cached_tokens} cached), {usage.completion_tokens} output")
+                print(f"Cost: ${total_cost:.4f} (saved ${cached_tokens * 0.00125 / 1000:.4f} from caching)")
+                
+                content = response.choices[0].message.content
             
             # Check if response was cut off mid-sentence
             if content and not content.rstrip().endswith(('.', '!', '?', '"', "'", '...', ':')):
@@ -685,6 +889,7 @@ def handle_user_input():
     data = request.get_json()
     user_input = data.get('input')
     return jsonify(bot.handle_user_input(user_input))
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5006)
